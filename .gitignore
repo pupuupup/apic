@@ -1,3 +1,4 @@
 save
 .env
-**//*.o
+src/*.o
+hds/*.o
