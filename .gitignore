@@ -3,3 +3,4 @@ save
 src/*.o
 hds/*.o
 apic
+a.out*
