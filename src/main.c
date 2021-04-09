@@ -149,6 +149,7 @@ char* get_request(char *path)
         else succeeded_request();
         curl_easy_cleanup(curl);
     }
+    if(chunk.size == 0) return "";
     return chunk.memory;
 }
 
@@ -191,6 +192,7 @@ char* post_request(char *path, char *post_data, enum PostType type)
         curl_easy_cleanup(curl);
         curl_slist_free_all(headers);
     }
+    if(chunk.size == 0) return "";
     return chunk.memory;
 }
 
