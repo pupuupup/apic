@@ -4,3 +4,5 @@ src/*.o
 hds/*.o
 apic
 a.out*
+tor/*
+tor
